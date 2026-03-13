@@ -600,22 +600,19 @@ def get_cumulative_cos(
 
 
 # =====================================================================
-# PARALLEL DATA LOADER – Site Deep-Dive
+# DATA LOADER – Site Deep-Dive
 # =====================================================================
 def get_site_deep_dive_data(
     start_date: date, end_date: date, company: str = None, site: str = None
 ) -> tuple:
-    """Fetch KPI, segmented, weekly, and daily data in parallel.
+    """Fetch KPI, segmented, weekly, and daily data sequentially.
     Returns (kpi_dict, segmented_df, weekly_df, daily_cos_df).
     """
-    _init_client()  # Warm up client from main thread before spawning workers
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        f_kpi = pool.submit(get_kpi_summary, start_date, end_date, company, site)
-        f_seg = pool.submit(get_segmented_performance, start_date, end_date, company, site)
-        f_wk  = pool.submit(get_weekly_performance, start_date, end_date, company, site)
-        f_cos = pool.submit(get_daily_cos, start_date, end_date, company, site)
-
-    return f_kpi.result(), f_seg.result(), f_wk.result(), f_cos.result()
+    kpi  = get_kpi_summary(start_date, end_date, company, site)
+    seg  = get_segmented_performance(start_date, end_date, company, site)
+    wk   = get_weekly_performance(start_date, end_date, company, site)
+    cos  = get_daily_cos(start_date, end_date, company, site)
+    return kpi, seg, wk, cos
 
 
 # =====================================================================
@@ -626,11 +623,10 @@ def get_portfolio_grid(start_date: date, end_date: date) -> pd.DataFrame:
     if not sources:
         return pd.DataFrame()
 
-    _init_client()  # Warm up client from main thread before spawning workers
     yoy_start, yoy_end = DateEngine.get_yoy_dates(start_date, end_date)
 
     def _query_source(s):
-        """Query a single source – runs in a thread."""
+        """Query a single source sequentially."""
         dataset_id = s["dataset_id"]
         customer_id = s.get("gads_customer_id")
         table = _table_ref(dataset_id)
@@ -672,14 +668,8 @@ def get_portfolio_grid(start_date: date, end_date: date) -> pd.DataFrame:
             "Revenue YoY %": round(rev_yoy, 1),
         }
 
-    # Run all source queries in parallel
-    rows = []
-    with ThreadPoolExecutor(max_workers=len(sources)) as pool:
-        futures = {pool.submit(_query_source, s): s for s in sources}
-        for future in as_completed(futures):
-            result = future.result()
-            if result:
-                rows.append(result)
+    # Run source queries sequentially
+    rows = [r for r in (_query_source(s) for s in sources) if r is not None]
 
     if not rows:
         return pd.DataFrame(columns=["Business Area", "Company", "Site",
