@@ -664,7 +664,8 @@ def render_portfolio_grid(start_date: date, end_date: date):
         ba_revenue = ba_df["Revenue (SEK)"].sum()
         ba_cost = ba_df["Cost (SEK)"].sum()
         ba_cos = ba_cost / ba_revenue * 100 if ba_revenue else 0
-        ba_yoy = ba_df["Revenue YoY %"].mean()
+        ba_yoy_rev = ba_df["YoY Revenue (SEK)"].sum()
+        ba_yoy = ((ba_revenue / ba_yoy_rev - 1) * 100) if ba_yoy_rev else 0
 
         rows += f'<tr class="portfolio-row-ba"><td><div class="portfolio-name"><span style="font-weight:600;color:#0f172a;">{ba}</span><span class="area-badge">Area</span></div></td><td>{fmt_num(ba_clicks)}</td><td style="font-weight:500;color:#0f172a;">{fmt_num(ba_revenue)} SEK</td><td>{fmt_num(ba_cost)} SEK</td><td class="td-bold">{ba_cos:.1f}%</td><td>9.0%</td><td>{perf_bar_html(ba_yoy)}</td></tr>'
 
@@ -674,7 +675,8 @@ def render_portfolio_grid(start_date: date, end_date: date):
             co_revenue = co_df["Revenue (SEK)"].sum()
             co_cost = co_df["Cost (SEK)"].sum()
             co_cos = co_cost / co_revenue * 100 if co_revenue else 0
-            co_yoy = co_df["Revenue YoY %"].mean()
+            co_yoy_rev = co_df["YoY Revenue (SEK)"].sum()
+            co_yoy = ((co_revenue / co_yoy_rev - 1) * 100) if co_yoy_rev else 0
 
             rows += f'<tr><td><div class="portfolio-name" style="padding-left:24px;"><span style="font-weight:500;color:#0f172a;">{company}</span></div></td><td>{fmt_num(co_clicks)}</td><td style="font-weight:500;color:#0f172a;">{fmt_num(co_revenue)} SEK</td><td>{fmt_num(co_cost)} SEK</td><td class="td-bold">{co_cos:.1f}%</td><td>9.0%</td><td>{perf_bar_html(co_yoy)}</td></tr>'
 

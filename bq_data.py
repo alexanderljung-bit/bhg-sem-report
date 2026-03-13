@@ -673,6 +673,6 @@ def get_portfolio_grid(start_date: date, end_date: date) -> pd.DataFrame:
 
     if not rows:
         return pd.DataFrame(columns=["Business Area", "Company", "Site",
-                                      "Clicks", "Revenue (SEK)", "Cost (SEK)",
-                                      "CoS %", "Revenue YoY %"])
+                                      "Clicks", "Revenue (SEK)", "YoY Revenue (SEK)",
+                                      "Cost (SEK)", "CoS %", "Revenue YoY %"])
     return pd.DataFrame(rows)
