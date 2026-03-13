@@ -196,7 +196,7 @@ def _get_vat_divisor(company: str = None, site: str = None) -> float:
 # CACHED QUERY RUNNER
 # =====================================================================
 @st.cache_data(ttl=3600, show_spinner=False)
-def _run_query(sql: str, _v: int = 2) -> pd.DataFrame:
+def _run_query(sql: str, _v: int = 3) -> pd.DataFrame:
     try:
         client = _get_client()
         return client.query(sql).to_dataframe()
@@ -663,6 +663,7 @@ def get_portfolio_grid(start_date: date, end_date: date) -> pd.DataFrame:
             "Site": s.get("label", dataset_id),
             "Clicks": int(r["clicks"] or 0),
             "Revenue (SEK)": round(rev),
+            "YoY Revenue (SEK)": round(yoy_rev),
             "Cost (SEK)": round(cost),
             "CoS %": round(cos, 1),
             "Revenue YoY %": round(rev_yoy, 1),
