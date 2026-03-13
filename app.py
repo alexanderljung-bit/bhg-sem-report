@@ -982,29 +982,6 @@ def render_settings():
 def main():
     start_date, end_date = render_top_bar()
 
-    # ── Temporary debug panel (remove after cloud debugging) ──
-    import os
-    with st.expander("🔧 Debug info (ta bort när det funkar)", expanded=False):
-        st.write("**Secrets:**", list(st.secrets.keys()) if st.secrets else "Inga secrets")
-        st.write("**Project ID:**", ga4_connector.get_project_id())
-        sources = ga4_connector.get_connected_sources()
-        st.write("**Datakällor:**", len(sources), [s.get("label") for s in sources])
-        if "gcp_service_account" in st.secrets:
-            st.write("✅ gcp_service_account hittat")
-            try:
-                from google.oauth2.service_account import Credentials
-                from google.cloud import bigquery as _bq
-                creds = Credentials.from_service_account_info(
-                    dict(st.secrets["gcp_service_account"]),
-                    scopes=["https://www.googleapis.com/auth/bigquery"],
-                )
-                client = _bq.Client(credentials=creds, project=ga4_connector.get_project_id())
-                st.write("✅ BigQuery-klient skapad OK")
-            except Exception as ex:
-                st.error(f"❌ BigQuery-fel: {ex}")
-        else:
-            st.warning("⚠️ Inga gcp_service_account i secrets")
-
     # Check if navigating to a menu page
     active = st.session_state.get("active_view", "Site Deep-Dive")
 
