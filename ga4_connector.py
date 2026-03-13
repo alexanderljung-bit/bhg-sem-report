@@ -9,9 +9,16 @@ Table pattern: events_YYYYMMDD (standard GA4 raw export)
 
 import json
 import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+try:
+    import streamlit as st
+    _HAS_STREAMLIT = True
+except ImportError:
+    _HAS_STREAMLIT = False
 
 CONFIG_PATH = Path(__file__).parent / "data_sources.json"
 DEFAULT_PROJECT = "bygghemma-bigdata"
@@ -29,7 +36,15 @@ COMPANIES = [
 
 
 def _load_config() -> dict:
-    """Load the data sources config from disk."""
+    """Load the data sources config from disk or Streamlit secrets."""
+    # Try Streamlit secrets first (Streamlit Cloud deployment)
+    if _HAS_STREAMLIT:
+        try:
+            if "data_sources" in st.secrets:
+                return json.loads(st.secrets["data_sources"])
+        except Exception:
+            pass
+    # Fall back to local file
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -117,15 +132,34 @@ def update_source(dataset_id: str, **fields) -> bool:
 
 def has_credentials() -> bool:
     """Check if GCP credentials are configured."""
+    # 1. Streamlit Cloud secrets (gcp_service_account as dict)
+    if _HAS_STREAMLIT:
+        try:
+            if "gcp_service_account" in st.secrets:
+                cred_dict = dict(st.secrets["gcp_service_account"])
+                # Write to a temp file so google-cloud-bigquery can use it
+                tmp = tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".json", delete=False, encoding="utf-8"
+                )
+                json.dump(cred_dict, tmp)
+                tmp.close()
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp.name
+                return True
+        except Exception:
+            pass
+
+    # 2. Environment variable pointing to a file
     cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
     if cred_path and os.path.isfile(cred_path):
         return True
-    # Also check for local config
+
+    # 3. Path stored in local config
     config = _load_config()
     local_cred = config.get("credentials_path", "")
     if local_cred and os.path.isfile(local_cred):
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = local_cred
         return True
+
     return False
 
 

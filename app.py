@@ -651,6 +651,11 @@ def render_portfolio_grid(start_date: date, end_date: date):
     """)
 
     df = get_portfolio_grid(start_date, end_date)
+
+    if df.empty:
+        st.info("Ingen data hittades för vald period. Kontrollera att datakällor är konfigurerade och att credentials är inlagda.")
+        return
+
     rows = ""
 
     for ba in df["Business Area"].unique():
