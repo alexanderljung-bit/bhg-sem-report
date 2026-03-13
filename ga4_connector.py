@@ -38,7 +38,18 @@ COMPANIES = [
 
 
 def _get_bq_client():
-    """Get a BigQuery client for config operations."""
+    """Get a BigQuery client for config operations.
+    Reuses the cached client from bq_data if available (proven on Cloud).
+    """
+    # 1. Try reusing the already-working cached client from bq_data
+    try:
+        from bq_data import _BQ_CLIENT
+        if _BQ_CLIENT is not None:
+            return _BQ_CLIENT
+    except Exception:
+        pass
+
+    # 2. Build own client from Streamlit secrets
     try:
         from google.cloud import bigquery
         if _HAS_STREAMLIT and "gcp_service_account" in st.secrets:
