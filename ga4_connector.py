@@ -69,49 +69,63 @@ def _load_config_from_bq() -> dict | None:
     return None
 
 
+def _ensure_bq_table(client):
+    """Create dataset and table if they don't exist."""
+    from google.cloud import bigquery
+    dataset_ref = bigquery.Dataset(f"{DEFAULT_PROJECT}.{BQ_CONFIG_DATASET}")
+    dataset_ref.location = "EU"
+    try:
+        client.get_dataset(dataset_ref)
+    except Exception:
+        client.create_dataset(dataset_ref, exists_ok=True)
+
+    table_id = f"{DEFAULT_PROJECT}.{BQ_CONFIG_DATASET}.{BQ_CONFIG_TABLE}"
+    schema = [
+        bigquery.SchemaField("config_json", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("updated_at", "TIMESTAMP", mode="REQUIRED"),
+    ]
+    table = bigquery.Table(table_id, schema=schema)
+    try:
+        client.get_table(table)
+    except Exception:
+        client.create_table(table, exists_ok=True)
+
+
 def _save_config_to_bq(config: dict) -> bool:
-    """Save config to BigQuery table. Creates dataset/table if needed."""
+    """Save config to BigQuery using pure DML (no streaming insert)."""
     client = _get_bq_client()
     if not client:
         return False
     try:
-        from google.cloud import bigquery
-
-        # Ensure dataset exists
-        dataset_ref = bigquery.Dataset(f"{DEFAULT_PROJECT}.{BQ_CONFIG_DATASET}")
-        dataset_ref.location = "EU"
-        try:
-            client.get_dataset(dataset_ref)
-        except Exception:
-            client.create_dataset(dataset_ref, exists_ok=True)
-
-        # Ensure table exists
+        _ensure_bq_table(client)
         table_id = f"{DEFAULT_PROJECT}.{BQ_CONFIG_DATASET}.{BQ_CONFIG_TABLE}"
-        schema = [
-            bigquery.SchemaField("config_json", "STRING", mode="REQUIRED"),
-            bigquery.SchemaField("updated_at", "TIMESTAMP", mode="REQUIRED"),
-        ]
-        table = bigquery.Table(table_id, schema=schema)
-        try:
-            client.get_table(table)
-        except Exception:
-            client.create_table(table, exists_ok=True)
+        config_json = json.dumps(config, ensure_ascii=False).replace("'", "\\'")
 
-        # Delete old rows and insert new one
-        client.query(f"DELETE FROM `{table_id}` WHERE TRUE").result()
-        config_json = json.dumps(config, ensure_ascii=False)
-        row = {"config_json": config_json, "updated_at": datetime.now(timezone.utc).isoformat()}
-        errors = client.insert_rows_json(table_id, [row])
-        return len(errors) == 0
+        # Use DML: delete all + insert in one transaction
+        sql = f"""
+        BEGIN
+          DELETE FROM `{table_id}` WHERE TRUE;
+          INSERT INTO `{table_id}` (config_json, updated_at)
+          VALUES ('{config_json}', CURRENT_TIMESTAMP());
+        END;
+        """
+        client.query(sql).result()
+        return True
     except Exception:
         return False
 
 
 def _load_config() -> dict:
-    """Load config: BigQuery → Streamlit secrets → local file."""
+    """Load config with session caching: session_state → BigQuery → secrets → file."""
+    # 0. Return cached config if available (avoids BQ query on every rerun)
+    if _HAS_STREAMLIT and "_config_cache" in st.session_state:
+        return st.session_state["_config_cache"]
+
     # 1. Try BigQuery (persistent cloud storage)
     bq_config = _load_config_from_bq()
     if bq_config and bq_config.get("sources"):
+        if _HAS_STREAMLIT:
+            st.session_state["_config_cache"] = bq_config
         return bq_config
 
     # 2. Try Streamlit secrets (initial seed)
@@ -119,8 +133,8 @@ def _load_config() -> dict:
         try:
             if "data_sources" in st.secrets:
                 config = json.loads(st.secrets["data_sources"])
-                # Seed BQ with secrets data on first run
                 _save_config_to_bq(config)
+                st.session_state["_config_cache"] = config
                 return config
         except Exception:
             pass
@@ -128,14 +142,19 @@ def _load_config() -> dict:
     # 3. Fall back to local file
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+            config = json.load(f)
+            if _HAS_STREAMLIT:
+                st.session_state["_config_cache"] = config
+            return config
     return {"project": DEFAULT_PROJECT, "sources": []}
 
 
 def _save_config(config: dict):
-    """Save config to BigQuery (cloud) and local file (dev)."""
-    # Always try BQ first
+    """Save config to BQ + local file and update session cache."""
     _save_config_to_bq(config)
+    # Update session cache immediately
+    if _HAS_STREAMLIT:
+        st.session_state["_config_cache"] = config
     # Also save locally if possible (for local dev)
     try:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -350,6 +369,9 @@ def test_connection(dataset_id: str) -> dict:
         return {"error": str(e)}
 
 
-# Ensure config file exists on import
-if not CONFIG_PATH.exists():
-    _save_config({"project": DEFAULT_PROJECT, "sources": []})
+# Ensure config file exists on import (skip on read-only filesystem)
+try:
+    if not CONFIG_PATH.exists():
+        _save_config({"project": DEFAULT_PROJECT, "sources": []})
+except Exception:
+    pass
