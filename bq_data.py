@@ -34,11 +34,20 @@ GADS_CAMPAIGN_STATS = f"ads_CampaignBasicStats_1502879059"
 GADS_CAMPAIGN_TABLE = f"ads_Campaign_1502879059"
 
 
-# =====================================================================
-# BQ CLIENT
-# =====================================================================
-def _get_client() -> bigquery.Client:
-    """Get BigQuery client, preferring Streamlit secrets over file credentials."""
+# Module-level client cache — initialized from main thread, reused by worker threads
+_BQ_CLIENT: bigquery.Client | None = None
+
+
+def _init_client() -> bigquery.Client:
+    """
+    Initialize (or return cached) BigQuery client.
+    MUST be called from the Streamlit main thread (has ScriptRunContext).
+    After first call, _get_client() is safe to use from any thread.
+    """
+    global _BQ_CLIENT
+    if _BQ_CLIENT is not None:
+        return _BQ_CLIENT
+
     # Streamlit Cloud: load credentials directly from secrets
     try:
         if "gcp_service_account" in st.secrets:
@@ -47,13 +56,26 @@ def _get_client() -> bigquery.Client:
                 dict(st.secrets["gcp_service_account"]),
                 scopes=["https://www.googleapis.com/auth/bigquery"],
             )
-            project = ga4_connector.get_project_id()
-            return bigquery.Client(credentials=creds, project=project)
+            _BQ_CLIENT = bigquery.Client(
+                credentials=creds, project=ga4_connector.get_project_id()
+            )
+            return _BQ_CLIENT
     except Exception:
         pass
+
     # Local dev: use file-based credentials
     ga4_connector.has_credentials()
-    return bigquery.Client(project=ga4_connector.get_project_id())
+    _BQ_CLIENT = bigquery.Client(project=ga4_connector.get_project_id())
+    return _BQ_CLIENT
+
+
+def _get_client() -> bigquery.Client:
+    """Return the cached client (thread-safe after _init_client() has been called)."""
+    global _BQ_CLIENT
+    if _BQ_CLIENT is not None:
+        return _BQ_CLIENT
+    return _init_client()
+
 
 
 def _table_ref(dataset_id: str) -> str:
@@ -586,6 +608,7 @@ def get_site_deep_dive_data(
     """Fetch KPI, segmented, weekly, and daily data in parallel.
     Returns (kpi_dict, segmented_df, weekly_df, daily_cos_df).
     """
+    _init_client()  # Warm up client from main thread before spawning workers
     with ThreadPoolExecutor(max_workers=4) as pool:
         f_kpi = pool.submit(get_kpi_summary, start_date, end_date, company, site)
         f_seg = pool.submit(get_segmented_performance, start_date, end_date, company, site)
@@ -603,6 +626,7 @@ def get_portfolio_grid(start_date: date, end_date: date) -> pd.DataFrame:
     if not sources:
         return pd.DataFrame()
 
+    _init_client()  # Warm up client from main thread before spawning workers
     yoy_start, yoy_end = DateEngine.get_yoy_dates(start_date, end_date)
 
     def _query_source(s):
