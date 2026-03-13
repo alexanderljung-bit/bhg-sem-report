@@ -1,0 +1,23 @@
+# Credentials & secrets
+.credentials/
+data_sources.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Old/unused
+bhg-sem-report-ai-studio/
