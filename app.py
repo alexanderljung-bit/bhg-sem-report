@@ -699,7 +699,6 @@ def render_portfolio_grid(start_date: date, end_date: date):
 # =====================================================================
 def render_data_sources():
     """Render the Data Sources management view."""
-    # ── Connected Sources ──
     sources = ga4_connector.get_connected_sources()
 
     st.html(f"""{COMPONENT_CSS}
@@ -752,35 +751,7 @@ def render_data_sources():
                 ga4_connector.remove_source(ds_id)
                 st.rerun()
 
-    if sources:
-        st.markdown(f"**Connected Sources ({len(sources)})**")
-
-        for s in sources:
-            ds_id = s["dataset_id"]
-            co = s.get("company", "—")
-            currency = s.get("currency", "SEK")
-            vat = s.get("vat_status", "ex_vat")
-            vat_label = "Ex VAT" if vat == "ex_vat" else "Inc VAT"
-            ba = s.get("business_area", "—")
-
-            rc1, rc2, rc3, rc4, rc5 = st.columns([3, 2, 1, 1, 1])
-            with rc1:
-                st.markdown(f"**{s['label']}** `{ds_id}`")
-            with rc2:
-                st.caption(f"{co} · {ba}")
-            with rc3:
-                st.caption(currency)
-            with rc4:
-                st.caption(vat_label)
-            with rc5:
-                if st.button("✏️", key=f"edit_{ds_id}"):
-                    _edit_source(ds_id)
-    else:
-        st.info("No data sources connected yet. Add one below.")
-
-    st.markdown("---")
-
-    # ── Add New Source ──
+    # ── Add New Source (first, always visible) ──
     st.subheader("Add New Source")
 
     add_mode = st.radio("Method", ["Manual", "Auto-Discover"], horizontal=True, key="add_mode")
@@ -873,6 +844,35 @@ def render_data_sources():
                                 lbl = st.session_state.get(f"lbl_{ds['dataset_id']}", ds['dataset_id'])
                                 ga4_connector.add_source(ds["dataset_id"], lbl or ds["dataset_id"])
                                 st.rerun()
+
+    st.markdown("---")
+
+    # ── Connected Sources (below, scrollable) ──
+    if sources:
+        st.markdown(f"**Connected Sources ({len(sources)})**")
+
+        for s in sources:
+            ds_id = s["dataset_id"]
+            co = s.get("company", "—")
+            currency = s.get("currency", "SEK")
+            vat = s.get("vat_status", "ex_vat")
+            vat_label = "Ex VAT" if vat == "ex_vat" else "Inc VAT"
+            ba = s.get("business_area", "—")
+
+            rc1, rc2, rc3, rc4, rc5 = st.columns([3, 2, 1, 1, 1])
+            with rc1:
+                st.markdown(f"**{s['label']}** `{ds_id}`")
+            with rc2:
+                st.caption(f"{co} · {ba}")
+            with rc3:
+                st.caption(currency)
+            with rc4:
+                st.caption(vat_label)
+            with rc5:
+                if st.button("✏️", key=f"edit_{ds_id}"):
+                    _edit_source(ds_id)
+    else:
+        st.info("No data sources connected yet. Use the form above to add one.")
 
 
 # =====================================================================
