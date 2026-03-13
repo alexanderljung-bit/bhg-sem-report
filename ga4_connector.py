@@ -61,7 +61,7 @@ def _load_config_from_bq() -> dict | None:
         return None
     try:
         sql = f"SELECT config_json FROM `{DEFAULT_PROJECT}.{BQ_CONFIG_DATASET}.{BQ_CONFIG_TABLE}` ORDER BY updated_at DESC LIMIT 1"
-        rows = list(client.query(sql).result())
+        rows = list(client.query(sql, location="EU").result())
         if rows:
             return json.loads(rows[0]["config_json"])
     except Exception:
@@ -99,7 +99,7 @@ def _save_config_to_bq(config: dict) -> bool:
         config_json = json.dumps(config, ensure_ascii=False)
 
         # Step 1: Delete old rows
-        client.query(f"DELETE FROM `{table_id}` WHERE TRUE").result()
+        client.query(f"DELETE FROM `{table_id}` WHERE TRUE", location="EU").result()
 
         # Step 2: Insert new row with parameterized query (safe for any JSON)
         sql = f"INSERT INTO `{table_id}` (config_json, updated_at) VALUES (@config_json, CURRENT_TIMESTAMP())"
@@ -108,7 +108,7 @@ def _save_config_to_bq(config: dict) -> bool:
                 bigquery.ScalarQueryParameter("config_json", "STRING", config_json),
             ]
         )
-        client.query(sql, job_config=job_config).result()
+        client.query(sql, job_config=job_config, location="EU").result()
         return True
     except Exception as e:
         if _HAS_STREAMLIT:
