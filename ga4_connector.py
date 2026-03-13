@@ -92,26 +92,31 @@ def _ensure_bq_table(client):
 
 
 def _save_config_to_bq(config: dict) -> bool:
-    """Save config to BigQuery using pure DML (no streaming insert)."""
+    """Save config to BigQuery using parameterized DML."""
     client = _get_bq_client()
     if not client:
         return False
     try:
+        from google.cloud import bigquery
         _ensure_bq_table(client)
         table_id = f"{DEFAULT_PROJECT}.{BQ_CONFIG_DATASET}.{BQ_CONFIG_TABLE}"
-        config_json = json.dumps(config, ensure_ascii=False).replace("'", "\\'")
+        config_json = json.dumps(config, ensure_ascii=False)
 
-        # Use DML: delete all + insert in one transaction
-        sql = f"""
-        BEGIN
-          DELETE FROM `{table_id}` WHERE TRUE;
-          INSERT INTO `{table_id}` (config_json, updated_at)
-          VALUES ('{config_json}', CURRENT_TIMESTAMP());
-        END;
-        """
-        client.query(sql).result()
+        # Step 1: Delete old rows
+        client.query(f"DELETE FROM `{table_id}` WHERE TRUE").result()
+
+        # Step 2: Insert new row with parameterized query (safe for any JSON)
+        sql = f"INSERT INTO `{table_id}` (config_json, updated_at) VALUES (@config_json, CURRENT_TIMESTAMP())"
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("config_json", "STRING", config_json),
+            ]
+        )
+        client.query(sql, job_config=job_config).result()
         return True
-    except Exception:
+    except Exception as e:
+        if _HAS_STREAMLIT:
+            st.warning(f"⚠️ Kunde inte spara till BigQuery: {e}")
         return False
 
 
