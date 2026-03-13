@@ -38,6 +38,20 @@ GADS_CAMPAIGN_TABLE = f"ads_Campaign_1502879059"
 # BQ CLIENT
 # =====================================================================
 def _get_client() -> bigquery.Client:
+    """Get BigQuery client, preferring Streamlit secrets over file credentials."""
+    # Streamlit Cloud: load credentials directly from secrets
+    try:
+        if "gcp_service_account" in st.secrets:
+            from google.oauth2.service_account import Credentials
+            creds = Credentials.from_service_account_info(
+                dict(st.secrets["gcp_service_account"]),
+                scopes=["https://www.googleapis.com/auth/bigquery"],
+            )
+            project = ga4_connector.get_project_id()
+            return bigquery.Client(credentials=creds, project=project)
+    except Exception:
+        pass
+    # Local dev: use file-based credentials
     ga4_connector.has_credentials()
     return bigquery.Client(project=ga4_connector.get_project_id())
 
