@@ -70,15 +70,8 @@ def _load_config_from_bq() -> dict | None:
 
 
 def _ensure_bq_table(client):
-    """Create dataset and table if they don't exist."""
+    """Create config table if it doesn't exist (dataset must exist already)."""
     from google.cloud import bigquery
-    dataset_ref = bigquery.Dataset(f"{DEFAULT_PROJECT}.{BQ_CONFIG_DATASET}")
-    dataset_ref.location = "EU"
-    try:
-        client.get_dataset(dataset_ref)
-    except Exception:
-        client.create_dataset(dataset_ref, exists_ok=True)
-
     table_id = f"{DEFAULT_PROJECT}.{BQ_CONFIG_DATASET}.{BQ_CONFIG_TABLE}"
     schema = [
         bigquery.SchemaField("config_json", "STRING", mode="REQUIRED"),
@@ -88,7 +81,10 @@ def _ensure_bq_table(client):
     try:
         client.get_table(table)
     except Exception:
-        client.create_table(table, exists_ok=True)
+        try:
+            client.create_table(table, exists_ok=True)
+        except Exception:
+            pass  # Table likely already exists
 
 
 def _save_config_to_bq(config: dict) -> bool:
