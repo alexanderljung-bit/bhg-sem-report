@@ -196,7 +196,7 @@ def _get_vat_divisor(company: str = None, site: str = None) -> float:
 # CACHED QUERY RUNNER
 # =====================================================================
 @st.cache_data(ttl=3600, show_spinner=False)
-def _run_query(sql: str) -> pd.DataFrame:
+def _run_query(sql: str, _v: int = 2) -> pd.DataFrame:
     try:
         client = _get_client()
         return client.query(sql).to_dataframe()
