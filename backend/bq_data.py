@@ -23,6 +23,26 @@ logger = logging.getLogger(__name__)
 PROJECT = "bygghemma-bigdata"
 STAGING_TABLE = f"`{PROJECT}.bhg_sem_report.fact_sem_sessions_daily`"
 
+# Cost lives at date+campaign+site grain, not session grain.
+# This subquery deduplicates before summing.
+_COST_SUBQUERY = f"""
+(SELECT SUM(daily_cost) FROM (
+  SELECT DISTINCT date, campaign_name, site, cost AS daily_cost
+  FROM {STAGING_TABLE}
+  WHERE date BETWEEN '{{start}}' AND '{{end}}'
+    {{filter}}
+))
+"""
+
+def _cost_sql(start: str, end: str, site_filter: str = "") -> str:
+    """Build a deduplicated cost scalar subquery."""
+    return f"""(SELECT SUM(daily_cost) FROM (
+      SELECT DISTINCT date, campaign_name, site, cost AS daily_cost
+      FROM {STAGING_TABLE}
+      WHERE date BETWEEN '{start}' AND '{end}'
+        {site_filter}
+    ))"""
+
 # Module-level client
 _BQ_CLIENT: bigquery.Client | None = None
 
@@ -121,23 +141,24 @@ def get_kpi_summary(
     yoy_start, yoy_end = DateEngine.get_yoy_dates(start_date, end_date)
     site_filter = _site_filter(company, site)
 
+    cost_sub = _cost_sql(start_date, end_date, site_filter)
     sql = f"""
     SELECT
-      -- Current period
       COUNT(DISTINCT CONCAT(user_pseudo_id, CAST(ga_session_id AS STRING))) AS clicks,
       SUM(transactions)  AS transactions,
       SUM(revenue_net)   AS revenue,
-      SUM(cost)          AS cost
+      {cost_sub}         AS cost
     FROM {STAGING_TABLE}
     WHERE date BETWEEN '{start_date}' AND '{end_date}'
       {site_filter}
     """
     df = _run_query(sql)
 
+    yoy_cost_sub = _cost_sql(yoy_start, yoy_end, site_filter)
     yoy_sql = f"""
     SELECT
       SUM(revenue_net) AS revenue,
-      SUM(cost)        AS cost,
+      {yoy_cost_sub}   AS cost,
       COUNT(DISTINCT CONCAT(user_pseudo_id, CAST(ga_session_id AS STRING))) AS clicks,
       SUM(transactions) AS transactions
     FROM {STAGING_TABLE}
@@ -190,30 +211,35 @@ def get_segmented_performance(
 
     sql = f"""
     WITH
+    dedup_cost AS (
+      SELECT campaign_segment, SUM(daily_cost) AS cost
+      FROM (SELECT DISTINCT date, campaign_name, site, campaign_segment, cost AS daily_cost
+            FROM {STAGING_TABLE}
+            WHERE date BETWEEN '{start_date}' AND '{end_date}' {site_filter})
+      GROUP BY 1
+    ),
     cur AS (
       SELECT
         campaign_segment AS segment,
         COUNT(DISTINCT CONCAT(user_pseudo_id, CAST(ga_session_id AS STRING))) AS clicks,
         SUM(transactions) AS transactions,
-        SUM(revenue_net)  AS revenue,
-        SUM(cost)         AS cost
+        SUM(revenue_net)  AS revenue
       FROM {STAGING_TABLE}
       WHERE date BETWEEN '{start_date}' AND '{end_date}'
         {site_filter}
       GROUP BY 1
     ),
     yoy AS (
-      SELECT
-        campaign_segment AS segment,
-        SUM(revenue_net)  AS revenue
+      SELECT campaign_segment AS segment, SUM(revenue_net) AS revenue
       FROM {STAGING_TABLE}
-      WHERE date BETWEEN '{yoy_start}' AND '{yoy_end}'
-        {site_filter}
+      WHERE date BETWEEN '{yoy_start}' AND '{yoy_end}' {site_filter}
       GROUP BY 1
     )
-    SELECT c.segment, c.clicks, c.transactions, c.revenue, c.cost,
+    SELECT c.segment, c.clicks, c.transactions, c.revenue,
+           COALESCE(dc.cost, 0) AS cost,
            COALESCE(y.revenue, 0) AS yoy_revenue
     FROM cur c
+    LEFT JOIN dedup_cost dc ON c.segment = dc.campaign_segment
     LEFT JOIN yoy y ON c.segment = y.segment
     ORDER BY c.segment
     """
@@ -260,12 +286,18 @@ def get_weekly_performance(
 
     sql = f"""
     WITH
+    dedup_cost_wk AS (
+      SELECT FORMAT_DATE('%G-W%V', date) AS wk, SUM(daily_cost) AS cost
+      FROM (SELECT DISTINCT date, campaign_name, site, cost AS daily_cost
+            FROM {STAGING_TABLE}
+            WHERE date BETWEEN '{week_start}' AND '{end_date}' {site_filter})
+      GROUP BY 1
+    ),
     cur_weekly AS (
       SELECT
         FORMAT_DATE('%G-W%V', date) AS wk,
         COUNT(DISTINCT CONCAT(user_pseudo_id, CAST(ga_session_id AS STRING))) AS clicks,
-        SUM(revenue_net) AS revenue,
-        SUM(cost)        AS cost
+        SUM(revenue_net) AS revenue
       FROM {STAGING_TABLE}
       WHERE date BETWEEN '{week_start}' AND '{end_date}'
         {site_filter}
@@ -281,10 +313,11 @@ def get_weekly_performance(
       GROUP BY 1
     )
     SELECT
-      c.wk AS week, c.clicks, c.revenue, c.cost,
+      c.wk AS week, c.clicks, c.revenue, COALESCE(dc.cost, 0) AS cost,
       SAFE_DIVIDE(c.revenue - COALESCE(y.revenue, 0),
                   NULLIF(COALESCE(y.revenue, 0), 0)) * 100 AS rev_yoy_pct
     FROM cur_weekly c
+    LEFT JOIN dedup_cost_wk dc ON c.wk = dc.wk
     LEFT JOIN yoy_weekly y ON c.wk = y.wk
     WHERE c.wk IS NOT NULL
     ORDER BY c.wk DESC
@@ -311,14 +344,23 @@ def get_daily_cos(
     site_filter = _site_filter(company, site)
 
     sql = f"""
+    WITH
+    dedup_cost_daily AS (
+      SELECT date, SUM(daily_cost) AS cost
+      FROM (SELECT DISTINCT date, campaign_name, site, cost AS daily_cost
+            FROM {STAGING_TABLE}
+            WHERE date BETWEEN '{start_date}' AND '{end_date}' {site_filter})
+      GROUP BY 1
+    )
     SELECT
-      date              AS Date,
-      SUM(revenue_net)  AS Revenue,
-      SUM(cost)         AS Cost
-    FROM {STAGING_TABLE}
-    WHERE date BETWEEN '{start_date}' AND '{end_date}'
+      s.date              AS Date,
+      SUM(s.revenue_net)  AS Revenue,
+      COALESCE(dc.cost, 0) AS Cost
+    FROM {STAGING_TABLE} s
+    LEFT JOIN dedup_cost_daily dc ON s.date = dc.date
+    WHERE s.date BETWEEN '{start_date}' AND '{end_date}'
       {site_filter}
-    GROUP BY 1
+    GROUP BY 1, 3
     ORDER BY 1
     """
     df = _run_query(sql)
@@ -375,29 +417,34 @@ def get_portfolio_grid(start_date: date, end_date: date) -> pd.DataFrame:
 
     sql = f"""
     WITH
+    dedup_cost_site AS (
+      SELECT site, SUM(daily_cost) AS cost
+      FROM (SELECT DISTINCT date, campaign_name, site, cost AS daily_cost
+            FROM {STAGING_TABLE}
+            WHERE date BETWEEN '{start_date}' AND '{end_date}')
+      GROUP BY 1
+    ),
     cur AS (
       SELECT
         business_area, company, site,
         COUNT(DISTINCT CONCAT(user_pseudo_id, CAST(ga_session_id AS STRING))) AS clicks,
-        SUM(revenue_net)  AS revenue,
-        SUM(cost)         AS cost
+        SUM(revenue_net)  AS revenue
       FROM {STAGING_TABLE}
       WHERE date BETWEEN '{start_date}' AND '{end_date}'
       GROUP BY 1, 2, 3
     ),
     yoy AS (
-      SELECT
-        site,
-        SUM(revenue_net) AS revenue
+      SELECT site, SUM(revenue_net) AS revenue
       FROM {STAGING_TABLE}
       WHERE date BETWEEN '{yoy_start}' AND '{yoy_end}'
       GROUP BY 1
     )
     SELECT
       c.business_area, c.company, c.site,
-      c.clicks, c.revenue, c.cost,
+      c.clicks, c.revenue, COALESCE(dc.cost, 0) AS cost,
       COALESCE(y.revenue, 0) AS yoy_revenue
     FROM cur c
+    LEFT JOIN dedup_cost_site dc ON c.site = dc.site
     LEFT JOIN yoy y ON c.site = y.site
     ORDER BY c.business_area, c.company, c.site
     """
