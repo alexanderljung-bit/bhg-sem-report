@@ -3,18 +3,30 @@ import { useState, createContext, useContext } from 'react';
 import Navbar from '@/components/Navbar';
 import './globals.css';
 
-// We import Outfit and JetBrains Mono in globals.css, so no next/font needed here if using standard @import.
-
 interface DateContextType {
     startDate: string;
     endDate: string;
 }
 
+interface DeepDiveContextType {
+    company: string;
+    site: string;
+    setCompany: (c: string) => void;
+    setSite: (s: string) => void;
+}
+
 export const DateContext = createContext<DateContextType>({ startDate: '', endDate: '' });
 export const useDates = () => useContext(DateContext);
 
+export const DeepDiveContext = createContext<DeepDiveContextType>({
+    company: '', site: '', setCompany: () => {}, setSite: () => {},
+});
+export const useDeepDive = () => useContext(DeepDiveContext);
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
     const [dates, setDates] = useState<DateContextType>({ startDate: '', endDate: '' });
+    const [company, setCompany] = useState('');
+    const [site, setSite] = useState('');
 
     return (
         <html lang="sv">
@@ -24,10 +36,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </head>
             <body>
                 <DateContext.Provider value={dates}>
-                    <Navbar onDatesChange={(start, end) => setDates({ startDate: start, endDate: end })} />
-                    <main className="content">
-                        {children}
-                    </main>
+                    <DeepDiveContext.Provider value={{ company, site, setCompany, setSite }}>
+                        <Navbar onDatesChange={(start, end) => setDates({ startDate: start, endDate: end })} />
+                        <main className="content">
+                            {children}
+                        </main>
+                    </DeepDiveContext.Provider>
                 </DateContext.Provider>
             </body>
         </html>

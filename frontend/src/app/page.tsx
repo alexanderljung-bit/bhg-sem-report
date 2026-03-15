@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useContext } from 'react';
-import { DateContext } from './layout';
+import { DateContext, DeepDiveContext } from './layout';
 import { getHierarchy, getDeepDive, KpiData, SegmentRow, WeeklyRow, DailyRow, CumulativeRow } from '@/lib/api';
 import KpiCard from '@/components/KpiCard';
 import YoyBadge from '@/components/YoyBadge';
@@ -12,10 +12,9 @@ import {
 
 export default function DeepDivePage() {
     const { startDate, endDate } = useContext(DateContext);
+    const { company, site, setCompany, setSite } = useContext(DeepDiveContext);
     const [companies, setCompanies] = useState<string[]>([]);
     const [sites, setSites] = useState<Record<string, string[]>>({});
-    const [company, setCompany] = useState('');
-    const [site, setSite] = useState('');
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState<{
         kpi: KpiData; segments: SegmentRow[]; weekly: WeeklyRow[];
