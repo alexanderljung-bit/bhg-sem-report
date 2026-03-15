@@ -81,7 +81,7 @@ class DateEngine:
         Get start/end dates for common presets.
 
         Args:
-            preset: One of 'MTD', 'Last 7 Days', 'Last 30 Days', 'Last Month'
+            preset: Named preset (MTD, Last 7/14/30/90 Days, Last Month/Quarter/Year, QTD, YTD, etc.)
             reference_date: Reference date (defaults to today)
 
         Returns:
@@ -97,6 +97,9 @@ class DateEngine:
 
         elif preset == "Last 7 Days":
             return yesterday - timedelta(days=6), yesterday
+
+        elif preset == "Last 14 Days":
+            return yesterday - timedelta(days=13), yesterday
 
         elif preset == "Last 30 Days":
             return yesterday - timedelta(days=29), yesterday
@@ -117,11 +120,32 @@ class DateEngine:
         elif preset == "YTD":
             return reference_date.replace(month=1, day=1), yesterday
 
+        elif preset == "Last Quarter":
+            # Full previous quarter
+            q = (reference_date.month - 1) // 3  # 0-based current quarter
+            if q == 0:
+                q_start = date(reference_date.year - 1, 10, 1)
+                q_end = date(reference_date.year - 1, 12, 31)
+            else:
+                q_start = date(reference_date.year, (q - 1) * 3 + 1, 1)
+                q_end = date(reference_date.year, q * 3, 1) - timedelta(days=1)
+            return q_start, q_end
+
         elif preset == "Last 3 Months":
             return yesterday - relativedelta(months=3), yesterday
 
+        elif preset == "Last 6 Months":
+            return yesterday - relativedelta(months=6), yesterday
+
+        elif preset == "Last 90 Days":
+            return yesterday - timedelta(days=89), yesterday
+
         elif preset == "Last 12 Months":
             return yesterday - relativedelta(months=12), yesterday
+
+        elif preset == "Last Year":
+            # Full previous calendar year
+            return date(reference_date.year - 1, 1, 1), date(reference_date.year - 1, 12, 31)
 
         else:
             # Default to MTD

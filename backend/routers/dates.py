@@ -25,7 +25,9 @@ def list_presets():
     """Available date presets."""
     return {
         "presets": [
-            "MTD", "Last 7 Days", "Last 30 Days", "Last Month",
-            "QTD", "YTD", "Last 3 Months", "Last 12 Months",
+            "MTD", "Last 7 Days", "Last 14 Days", "Last 30 Days",
+            "Last Month", "Last Quarter", "QTD", "YTD",
+            "Last 3 Months", "Last 6 Months", "Last 90 Days",
+            "Last 12 Months", "Last Year",
         ]
     }

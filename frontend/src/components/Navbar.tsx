@@ -4,7 +4,12 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { getPresetDates } from '@/lib/api';
 
-const PRESETS = ['MTD', 'Last 7 Days', 'Last 30 Days', 'Last Month', 'QTD', 'YTD'];
+const PRESETS = [
+    'MTD', 'Last 7 Days', 'Last 14 Days', 'Last 30 Days',
+    'Last Month', 'Last Quarter', 'QTD', 'YTD',
+    'Last 3 Months', 'Last 6 Months', 'Last 90 Days',
+    'Last 12 Months', 'Last Year', 'Custom',
+];
 
 interface NavbarProps {
     onDatesChange: (start: string, end: string) => void;
@@ -14,10 +19,20 @@ export default function Navbar({ onDatesChange }: NavbarProps) {
     const pathname = usePathname();
     const [preset, setPreset] = useState('MTD');
     const [menuOpen, setMenuOpen] = useState(false);
+    const [customStart, setCustomStart] = useState('');
+    const [customEnd, setCustomEnd] = useState('');
 
     useEffect(() => {
-        getPresetDates(preset).then(d => onDatesChange(d.start, d.end));
+        if (preset !== 'Custom') {
+            getPresetDates(preset).then(d => onDatesChange(d.start, d.end));
+        }
     }, [preset]);
+
+    const handleCustomApply = () => {
+        if (customStart && customEnd) {
+            onDatesChange(customStart, customEnd);
+        }
+    };
 
     return (
         <nav className="navbar">
@@ -32,6 +47,30 @@ export default function Navbar({ onDatesChange }: NavbarProps) {
                         <option key={p} value={p}>{p}</option>
                     ))}
                 </select>
+                {preset === 'Custom' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input
+                            type="date"
+                            value={customStart}
+                            onChange={e => setCustomStart(e.target.value)}
+                            style={{ padding: '8px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', fontSize: '0.85rem', fontFamily: 'Outfit, sans-serif' }}
+                        />
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>–</span>
+                        <input
+                            type="date"
+                            value={customEnd}
+                            onChange={e => setCustomEnd(e.target.value)}
+                            style={{ padding: '8px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', fontSize: '0.85rem', fontFamily: 'Outfit, sans-serif' }}
+                        />
+                        <button
+                            className="btn btn-sm btn-primary"
+                            onClick={handleCustomApply}
+                            disabled={!customStart || !customEnd}
+                        >
+                            Kör
+                        </button>
+                    </div>
+                )}
             </div>
 
             <div className="navbar-menu">
