@@ -23,20 +23,10 @@ logger = logging.getLogger(__name__)
 PROJECT = "bygghemma-bigdata"
 STAGING_TABLE = f"`{PROJECT}.bhg_sem_report.fact_sem_sessions_daily`"
 
-# Google Ads tables (for clicks)
+# Google Ads tables (for clicks and cost)
 GADS_DATASET = "gad_bygghemma_mcc_1502879059_new_api"
 GADS_STATS = f"`{PROJECT}.{GADS_DATASET}.ads_CampaignBasicStats_1502879059`"
 GADS_CAMPAIGNS = f"`{PROJECT}.{GADS_DATASET}.ads_Campaign_1502879059`"
-
-
-def _cost_sql(start: str, end: str, site_filter: str = "") -> str:
-    """Build a deduplicated cost scalar subquery."""
-    return f"""(SELECT SUM(daily_cost) FROM (
-      SELECT DISTINCT date, campaign_name, site, cost AS daily_cost
-      FROM {STAGING_TABLE}
-      WHERE date BETWEEN '{start}' AND '{end}'
-        {site_filter}
-    ))"""
 
 
 def _get_customer_ids(company: str = None, site: str = None) -> list[str]:
@@ -55,6 +45,17 @@ def _ads_clicks_sql(start: str, end: str, customer_ids: list[str]) -> str:
         return "0"
     ids = ", ".join(customer_ids)
     return f"""(SELECT COALESCE(SUM(metrics_clicks), 0)
+     FROM {GADS_STATS}
+     WHERE segments_date BETWEEN '{start}' AND '{end}'
+       AND customer_id IN ({ids}))"""
+
+
+def _ads_cost_sql(start: str, end: str, customer_ids: list[str]) -> str:
+    """Build a scalar subquery for Google Ads cost (direct from Ads tables)."""
+    if not customer_ids:
+        return "0"
+    ids = ", ".join(customer_ids)
+    return f"""(SELECT COALESCE(SUM(metrics_cost_micros), 0) / 1000000
      FROM {GADS_STATS}
      WHERE segments_date BETWEEN '{start}' AND '{end}'
        AND customer_id IN ({ids}))"""
@@ -158,7 +159,7 @@ def get_kpi_summary(
     site_filter = _site_filter(company, site)
     customer_ids = _get_customer_ids(company, site)
 
-    cost_sub = _cost_sql(start_date, end_date, site_filter)
+    cost_sub = _ads_cost_sql(start_date, end_date, customer_ids)
     clicks_sub = _ads_clicks_sql(start_date, end_date, customer_ids)
     sql = f"""
     SELECT
@@ -172,7 +173,7 @@ def get_kpi_summary(
     """
     df = _run_query(sql)
 
-    yoy_cost_sub = _cost_sql(yoy_start, yoy_end, site_filter)
+    yoy_cost_sub = _ads_cost_sql(yoy_start, yoy_end, customer_ids)
     yoy_clicks_sub = _ads_clicks_sql(yoy_start, yoy_end, customer_ids)
     yoy_sql = f"""
     SELECT
@@ -235,20 +236,14 @@ def get_segmented_performance(
     ads_clicks_seg AS (
       SELECT
         CASE WHEN LOWER(COALESCE(c.campaign_name, '')) LIKE '%brand%' THEN 'Brand' ELSE 'Non-Brand' END AS segment,
-        SUM(s.metrics_clicks) AS clicks
+        SUM(s.metrics_clicks) AS clicks,
+        SUM(s.metrics_cost_micros) / 1000000 AS cost
       FROM {GADS_STATS} s
       JOIN (SELECT campaign_id, customer_id, campaign_name FROM {GADS_CAMPAIGNS}
             QUALIFY ROW_NUMBER() OVER (PARTITION BY campaign_id, customer_id ORDER BY _DATA_DATE DESC) = 1) c
         ON s.campaign_id = c.campaign_id AND s.customer_id = c.customer_id
       WHERE s.segments_date BETWEEN '{start_date}' AND '{end_date}'
         AND s.customer_id IN ({ids_list})
-      GROUP BY 1
-    ),
-    dedup_cost AS (
-      SELECT campaign_segment, SUM(daily_cost) AS cost
-      FROM (SELECT DISTINCT date, campaign_name, site, campaign_segment, cost AS daily_cost
-            FROM {STAGING_TABLE}
-            WHERE date BETWEEN '{start_date}' AND '{end_date}' {site_filter})
       GROUP BY 1
     ),
     cur AS (
@@ -268,11 +263,10 @@ def get_segmented_performance(
       GROUP BY 1
     )
     SELECT c.segment, COALESCE(ac.clicks, 0) AS clicks, c.transactions, c.revenue,
-           COALESCE(dc.cost, 0) AS cost,
+           COALESCE(ac.cost, 0) AS cost,
            COALESCE(y.revenue, 0) AS yoy_revenue
     FROM cur c
     LEFT JOIN ads_clicks_seg ac ON c.segment = ac.segment
-    LEFT JOIN dedup_cost dc ON c.segment = dc.campaign_segment
     LEFT JOIN yoy y ON c.segment = y.segment
     ORDER BY c.segment
     """
@@ -322,17 +316,12 @@ def get_weekly_performance(
     sql = f"""
     WITH
     ads_clicks_wk AS (
-      SELECT FORMAT_DATE('%G-W%V', s.segments_date) AS wk, SUM(s.metrics_clicks) AS clicks
+      SELECT FORMAT_DATE('%G-W%V', s.segments_date) AS wk,
+             SUM(s.metrics_clicks) AS clicks,
+             SUM(s.metrics_cost_micros) / 1000000 AS cost
       FROM {GADS_STATS} s
       WHERE s.segments_date BETWEEN '{week_start}' AND '{end_date}'
         AND s.customer_id IN ({ids_list})
-      GROUP BY 1
-    ),
-    dedup_cost_wk AS (
-      SELECT FORMAT_DATE('%G-W%V', date) AS wk, SUM(daily_cost) AS cost
-      FROM (SELECT DISTINCT date, campaign_name, site, cost AS daily_cost
-            FROM {STAGING_TABLE}
-            WHERE date BETWEEN '{week_start}' AND '{end_date}' {site_filter})
       GROUP BY 1
     ),
     cur_weekly AS (
@@ -354,12 +343,11 @@ def get_weekly_performance(
       GROUP BY 1
     )
     SELECT
-      c.wk AS week, COALESCE(ac.clicks, 0) AS clicks, c.revenue, COALESCE(dc.cost, 0) AS cost,
+      c.wk AS week, COALESCE(ac.clicks, 0) AS clicks, c.revenue, COALESCE(ac.cost, 0) AS cost,
       SAFE_DIVIDE(c.revenue - COALESCE(y.revenue, 0),
                   NULLIF(COALESCE(y.revenue, 0), 0)) * 100 AS rev_yoy_pct
     FROM cur_weekly c
     LEFT JOIN ads_clicks_wk ac ON c.wk = ac.wk
-    LEFT JOIN dedup_cost_wk dc ON c.wk = dc.wk
     LEFT JOIN yoy_weekly y ON c.wk = y.wk
     WHERE c.wk IS NOT NULL
     ORDER BY c.wk DESC
@@ -384,22 +372,24 @@ def get_daily_cos(
     start_date: date, end_date: date, company: str = None, site: str = None
 ) -> pd.DataFrame:
     site_filter = _site_filter(company, site)
+    customer_ids = _get_customer_ids(company, site)
+    ids_list = ", ".join(customer_ids) if customer_ids else "0"
 
     sql = f"""
     WITH
-    dedup_cost_daily AS (
-      SELECT date, SUM(daily_cost) AS cost
-      FROM (SELECT DISTINCT date, campaign_name, site, cost AS daily_cost
-            FROM {STAGING_TABLE}
-            WHERE date BETWEEN '{start_date}' AND '{end_date}' {site_filter})
+    ads_cost_daily AS (
+      SELECT s.segments_date AS date, SUM(s.metrics_cost_micros) / 1000000 AS cost
+      FROM {GADS_STATS} s
+      WHERE s.segments_date BETWEEN '{start_date}' AND '{end_date}'
+        AND s.customer_id IN ({ids_list})
       GROUP BY 1
     )
     SELECT
       s.date              AS Date,
       SUM(s.revenue_net)  AS Revenue,
-      COALESCE(dc.cost, 0) AS Cost
+      COALESCE(ac.cost, 0) AS Cost
     FROM {STAGING_TABLE} s
-    LEFT JOIN dedup_cost_daily dc ON s.date = dc.date
+    LEFT JOIN ads_cost_daily ac ON s.date = ac.date
     WHERE s.date BETWEEN '{start_date}' AND '{end_date}'
       {site_filter}
     GROUP BY 1, 3
@@ -464,25 +454,6 @@ def get_portfolio_grid(start_date: date, end_date: date) -> pd.DataFrame:
 
     sql = f"""
     WITH
-    ads_campaigns AS (
-      SELECT campaign_id, customer_id, campaign_name
-      FROM {GADS_CAMPAIGNS}
-      QUALIFY ROW_NUMBER() OVER (PARTITION BY campaign_id, customer_id ORDER BY _DATA_DATE DESC) = 1
-    ),
-    ads_clicks_site AS (
-      SELECT customer_id, SUM(metrics_clicks) AS clicks
-      FROM {GADS_STATS}
-      WHERE segments_date BETWEEN '{start_date}' AND '{end_date}'
-        AND customer_id IN ({all_ids})
-      GROUP BY 1
-    ),
-    dedup_cost_site AS (
-      SELECT site, SUM(daily_cost) AS cost
-      FROM (SELECT DISTINCT date, campaign_name, site, cost AS daily_cost
-            FROM {STAGING_TABLE}
-            WHERE date BETWEEN '{start_date}' AND '{end_date}')
-      GROUP BY 1
-    ),
     cur AS (
       SELECT
         business_area, company, site,
@@ -499,23 +470,23 @@ def get_portfolio_grid(start_date: date, end_date: date) -> pd.DataFrame:
     )
     SELECT
       c.business_area, c.company, c.site,
-      c.revenue, COALESCE(dc.cost, 0) AS cost,
+      c.revenue,
       COALESCE(y.revenue, 0) AS yoy_revenue
     FROM cur c
-    LEFT JOIN dedup_cost_site dc ON c.site = dc.site
     LEFT JOIN yoy y ON c.site = y.site
     ORDER BY c.business_area, c.company, c.site
     """
     df = _run_query(sql)
     if not df.empty:
-        # Map site → gads_customer_id → clicks
+        # Map site → gads_customer_id → clicks & cost
         site_to_cid = {s.get("label"): s.get("gads_customer_id") for s in sources}
-        # Get ads clicks per customer_id
-        clicks_sql = f"""SELECT customer_id, SUM(metrics_clicks) AS clicks FROM {GADS_STATS}
+        ads_sql = f"""SELECT customer_id, SUM(metrics_clicks) AS clicks,
+          SUM(metrics_cost_micros) / 1000000 AS cost FROM {GADS_STATS}
           WHERE segments_date BETWEEN '{start_date}' AND '{end_date}'
             AND customer_id IN ({all_ids}) GROUP BY 1"""
-        clicks_df = _run_query(clicks_sql)
-        cid_clicks = dict(zip(clicks_df["customer_id"].astype(str), clicks_df["clicks"])) if not clicks_df.empty else {}
+        ads_df = _run_query(ads_sql)
+        cid_clicks = dict(zip(ads_df["customer_id"].astype(str), ads_df["clicks"])) if not ads_df.empty else {}
+        cid_cost = dict(zip(ads_df["customer_id"].astype(str), ads_df["cost"])) if not ads_df.empty else {}
 
     if df.empty:
         return pd.DataFrame(columns=["Business Area", "Company", "Site",
@@ -526,11 +497,11 @@ def get_portfolio_grid(start_date: date, end_date: date) -> pd.DataFrame:
     for _, r in df.iterrows():
         rev = float(r["revenue"] or 0)
         yoy_rev = float(r["yoy_revenue"] or 0)
-        cost = float(r["cost"] or 0)
-        cos = (cost / rev * 100) if rev else 0
-        rev_yoy = ((rev / yoy_rev - 1) * 100) if yoy_rev else 0
         site_cid = site_to_cid.get(r["site"], "")
         site_clicks = int(cid_clicks.get(str(site_cid), 0))
+        cost = float(cid_cost.get(str(site_cid), 0))
+        cos = (cost / rev * 100) if rev else 0
+        rev_yoy = ((rev / yoy_rev - 1) * 100) if yoy_rev else 0
 
         rows.append({
             "Business Area": r["business_area"],
