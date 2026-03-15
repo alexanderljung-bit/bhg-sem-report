@@ -50,7 +50,7 @@ export default function DeepDivePage() {
     return (
         <div>
             {/* Filter bar */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 32 }}>
+            <div className="filter-wrapper">
                 <div className="filter-bar" style={{ marginBottom: 0 }}>
                     <select value={company} onChange={e => { setCompany(e.target.value); setSite(''); }}>
                         <option value="">— Välj bolag —</option>
@@ -62,7 +62,7 @@ export default function DeepDivePage() {
                     </select>
                 </div>
                 {startDate && endDate && (
-                    <span style={{ fontSize: '0.9rem', fontWeight: 500, color: 'var(--text-muted)' }}>
+                    <span className="filter-date">
                         {startDate} – {endDate}
                     </span>
                 )}

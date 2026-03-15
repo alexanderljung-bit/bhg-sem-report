@@ -572,10 +572,22 @@ select:hover {
 }
 
 /* Filter bar (Pill shaped) */
+.filter-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 32px;
+}
+
+.filter-date {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
 .filter-bar {
   display: flex;
   gap: 16px;
-  margin-bottom: 32px;
   align-items: center;
   background: var(--surface-solid);
   padding: 12px 20px;
@@ -764,6 +776,16 @@ input:focus {
     order: 3;
     width: 100%;
     justify-content: center;
+  }
+
+  .filter-wrapper {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+  }
+
+  .filter-date {
+    font-size: 0.8rem;
   }
 
   .filter-bar {
