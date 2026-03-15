@@ -1,0 +1,38 @@
+# Node / Frontend
+frontend/
+
+# Streamlit (legacy root files)
+/app.py
+/app_blueprint.py
+/dummy_data.py
+/bq_client.py
+/bq_data.py
+/date_engine.py
+/ga4_connector.py
+/requirements.txt
+/static/
+/bhg-logo.png
+/bhg_logo.png
+/.streamlit/
+
+# Credentials
+.credentials/
+service-account.json
+/data_sources.json
+
+# Dev files
+__pycache__/
+*.pyc
+*.pyo
+.env
+.git/
+.gitignore
+.gcloudignore
+.dockerignore
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Old
+bhg-sem-report-ai-studio/

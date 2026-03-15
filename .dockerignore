@@ -1,0 +1,37 @@
+# Frontend (not needed in backend Docker image)
+frontend/
+node_modules/
+
+# Streamlit (legacy)
+.streamlit/
+app.py
+app_blueprint.py
+dummy_data.py
+bq_client.py
+bq_data.py
+date_engine.py
+ga4_connector.py
+static/
+bhg-logo.png
+bhg_logo.png
+requirements.txt
+
+# Credentials
+.credentials/
+service-account.json
+data_sources.json
+
+# Dev files
+__pycache__/
+*.pyc
+*.pyo
+.env
+.git
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Old
+bhg-sem-report-ai-studio/

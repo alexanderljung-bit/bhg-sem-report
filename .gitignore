@@ -1,6 +1,10 @@
 # Credentials & secrets
 .credentials/
 data_sources.json
+service-account.json
+
+# Node
+node_modules/
 
 # Python
 __pycache__/
