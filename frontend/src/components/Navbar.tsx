@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useUser } from '@auth0/nextjs-auth0/client';
 import { getPresetDates } from '@/lib/api';
 
 const PRESETS = [
@@ -17,6 +18,7 @@ interface NavbarProps {
 
 export default function Navbar({ onDatesChange }: NavbarProps) {
     const pathname = usePathname();
+    const { user } = useUser();
     const [preset, setPreset] = useState('MTD');
     const [menuOpen, setMenuOpen] = useState(false);
     const [customStart, setCustomStart] = useState('');
@@ -97,6 +99,16 @@ export default function Navbar({ onDatesChange }: NavbarProps) {
                             onClick={() => setMenuOpen(false)}>
                             ⚙️ Settings
                         </Link>
+                        <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+                        {user && (
+                            <div style={{ padding: '6px 16px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                {user.email}
+                            </div>
+                        )}
+                        <a href="/auth/logout" className="btn btn-sm" style={{ width: '100%', border: 'none', borderRadius: 0, justifyContent: 'flex-start', color: '#e74c3c' }}
+                            onClick={() => setMenuOpen(false)}>
+                            🚪 Logga ut
+                        </a>
                     </div>
                 )}
             </div>

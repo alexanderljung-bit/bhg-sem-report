@@ -1,5 +1,6 @@
 'use client';
 import { useState, createContext, useContext } from 'react';
+import { Auth0Provider } from '@auth0/nextjs-auth0/client';
 import Navbar from '@/components/Navbar';
 import './globals.css';
 
@@ -35,14 +36,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <meta name="description" content="BHG Group SEM Performance Dashboard" />
             </head>
             <body>
-                <DateContext.Provider value={dates}>
-                    <DeepDiveContext.Provider value={{ company, site, setCompany, setSite }}>
-                        <Navbar onDatesChange={(start, end) => setDates({ startDate: start, endDate: end })} />
-                        <main className="content">
-                            {children}
-                        </main>
-                    </DeepDiveContext.Provider>
-                </DateContext.Provider>
+                <Auth0Provider>
+                    <DateContext.Provider value={dates}>
+                        <DeepDiveContext.Provider value={{ company, site, setCompany, setSite }}>
+                            <Navbar onDatesChange={(start, end) => setDates({ startDate: start, endDate: end })} />
+                            <main className="content">
+                                {children}
+                            </main>
+                        </DeepDiveContext.Provider>
+                    </DateContext.Provider>
+                </Auth0Provider>
             </body>
         </html>
     );
