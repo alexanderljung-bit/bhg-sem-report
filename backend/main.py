@@ -29,12 +29,13 @@ app.add_middleware(
 )
 
 # Import and register routers
-from .routers import kpi, portfolio, sources, dates  # noqa: E402
+from .routers import kpi, portfolio, sources, dates, etl  # noqa: E402
 
 app.include_router(kpi.router, prefix="/api")
 app.include_router(portfolio.router, prefix="/api")
 app.include_router(sources.router, prefix="/api")
 app.include_router(dates.router, prefix="/api")
+app.include_router(etl.router)
 
 
 @app.get("/api/health")

@@ -1,0 +1,45 @@
+-- =============================================================================
+-- fact_sem_sessions_daily  (TEMPLATE — see run_fact_sem.py for execution)
+-- =============================================================================
+-- This file documents the structure of the staging table.
+-- The actual CREATE TABLE and INSERT statements are generated dynamically
+-- by run_fact_sem.py, which reads all connected GA4 datasets from
+-- data_sources.json / BigQuery config and UNION ALLs them together.
+--
+-- This means: when you add a new Analytics property via the Settings UI,
+-- the next run of run_fact_sem.py will automatically include it.
+--
+-- Target table : bygghemma-bigdata.bhg_sem_report.fact_sem_sessions_daily
+-- Schedule     : Run daily (yesterday's data)
+-- =============================================================================
+--
+-- SCHEMA:
+-- ┌──────────────────┬──────────┬────────────────────────────────────────────┐
+-- │ Column           │ Type     │ Description                                │
+-- ├──────────────────┼──────────┼────────────────────────────────────────────┤
+-- │ date             │ DATE     │ Event date (partition key)                  │
+-- │ site             │ STRING   │ Site label (e.g. "Bygghemma.se")           │
+-- │ company          │ STRING   │ Company name (e.g. "Bygghemma Nordic")     │
+-- │ business_area    │ STRING   │ BHG business area                          │
+-- │ user_pseudo_id   │ STRING   │ GA4 anonymous cookie ID                    │
+-- │ ga_session_id    │ INT64    │ GA4 session ID                             │
+-- │ campaign_name    │ STRING   │ Google Ads campaign name                   │
+-- │ landing_page     │ STRING   │ Landing page URL                           │
+-- │ campaign_segment │ STRING   │ "Brand" or "Non-Brand"                     │
+-- │ transactions     │ INT64    │ Unique purchase count                      │
+-- │ revenue_net      │ FLOAT64  │ Revenue excl. VAT (SEK)                    │
+-- │ cost             │ FLOAT64  │ Google Ads cost (SEK)                      │
+-- │ cos_pct          │ FLOAT64  │ Cost of Sales %                            │
+-- └──────────────────┴──────────┴────────────────────────────────────────────┘
+--
+-- Example verification query:
+--
+-- SELECT date, site, campaign_segment,
+--        COUNT(*) AS sessions,
+--        SUM(transactions) AS txn,
+--        ROUND(SUM(revenue_net)) AS rev,
+--        ROUND(SUM(cost)) AS cost
+-- FROM `bygghemma-bigdata.bhg_sem_report.fact_sem_sessions_daily`
+-- GROUP BY 1, 2, 3
+-- ORDER BY 1 DESC, 2
+-- LIMIT 20;
