@@ -153,7 +153,8 @@ export default function DeepDivePage() {
                             <div className="data-table-header">
                                 <span className="data-table-title">Performance by Segment</span>
                             </div>
-                            <table className="data-table">
+                            <div className="table-responsive">
+                                <table className="data-table">
                                 <thead>
                                     <tr>
                                         <th>Segment</th><th>Clicks</th><th>Transactions</th><th>CR %</th>
@@ -195,7 +196,8 @@ export default function DeepDivePage() {
                                         );
                                     })()}
                                 </tbody>
-                            </table>
+                                </table>
+                            </div>
                         </div>
                     )}
 
@@ -205,7 +207,8 @@ export default function DeepDivePage() {
                             <div className="data-table-header">
                                 <span className="data-table-title">Weekly Performance</span>
                             </div>
-                            <table className="data-table">
+                            <div className="table-responsive">
+                                <table className="data-table">
                                 <thead>
                                     <tr>
                                         <th>Week</th><th>Clicks</th><th>Revenue</th><th>Cost</th><th>CoS</th><th>YoY</th>
@@ -223,7 +226,8 @@ export default function DeepDivePage() {
                                         </tr>
                                     ))}
                                 </tbody>
-                            </table>
+                                </table>
+                            </div>
                         </div>
                     )}
                 </>

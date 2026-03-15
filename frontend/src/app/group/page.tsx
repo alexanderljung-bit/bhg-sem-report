@@ -45,7 +45,8 @@ export default function GroupPage() {
             </div>
 
             <div className="data-table-card">
-                <table className="data-table">
+                <div className="table-responsive">
+                    <table className="data-table">
                     <thead>
                         <tr>
                             <th style={{ textAlign: 'left', width: '25%' }}>Business Area / Company / Site</th>
@@ -110,7 +111,8 @@ export default function GroupPage() {
                             );
                         })}
                     </tbody>
-                </table>
+                    </table>
+                </div>
             </div>
         </div>
     );
