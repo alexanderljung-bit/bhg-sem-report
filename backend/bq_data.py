@@ -23,16 +23,11 @@ logger = logging.getLogger(__name__)
 PROJECT = "bygghemma-bigdata"
 STAGING_TABLE = f"`{PROJECT}.bhg_sem_report.fact_sem_sessions_daily`"
 
-# Cost lives at date+campaign+site grain, not session grain.
-# This subquery deduplicates before summing.
-_COST_SUBQUERY = f"""
-(SELECT SUM(daily_cost) FROM (
-  SELECT DISTINCT date, campaign_name, site, cost AS daily_cost
-  FROM {STAGING_TABLE}
-  WHERE date BETWEEN '{{start}}' AND '{{end}}'
-    {{filter}}
-))
-"""
+# Google Ads tables (for clicks)
+GADS_DATASET = "gad_bygghemma_mcc_1502879059_new_api"
+GADS_STATS = f"`{PROJECT}.{GADS_DATASET}.ads_CampaignBasicStats_1502879059`"
+GADS_CAMPAIGNS = f"`{PROJECT}.{GADS_DATASET}.ads_Campaign_1502879059`"
+
 
 def _cost_sql(start: str, end: str, site_filter: str = "") -> str:
     """Build a deduplicated cost scalar subquery."""
@@ -42,6 +37,27 @@ def _cost_sql(start: str, end: str, site_filter: str = "") -> str:
       WHERE date BETWEEN '{start}' AND '{end}'
         {site_filter}
     ))"""
+
+
+def _get_customer_ids(company: str = None, site: str = None) -> list[str]:
+    """Get Google Ads customer IDs for the given site/company filter."""
+    sources = ga4_connector.get_connected_sources()
+    if site and site != "All Sites":
+        sources = [s for s in sources if s.get("label") == site]
+    elif company and company != "All Companies":
+        sources = [s for s in sources if s.get("company") == company]
+    return [s["gads_customer_id"] for s in sources if s.get("gads_customer_id")]
+
+
+def _ads_clicks_sql(start: str, end: str, customer_ids: list[str]) -> str:
+    """Build a scalar subquery for Google Ads clicks."""
+    if not customer_ids:
+        return "0"
+    ids = ", ".join(customer_ids)
+    return f"""(SELECT COALESCE(SUM(metrics_clicks), 0)
+     FROM {GADS_STATS}
+     WHERE segments_date BETWEEN '{start}' AND '{end}'
+       AND customer_id IN ({ids}))"""
 
 # Module-level client
 _BQ_CLIENT: bigquery.Client | None = None
@@ -140,11 +156,13 @@ def get_kpi_summary(
 ) -> dict:
     yoy_start, yoy_end = DateEngine.get_yoy_dates(start_date, end_date)
     site_filter = _site_filter(company, site)
+    customer_ids = _get_customer_ids(company, site)
 
     cost_sub = _cost_sql(start_date, end_date, site_filter)
+    clicks_sub = _ads_clicks_sql(start_date, end_date, customer_ids)
     sql = f"""
     SELECT
-      COUNT(DISTINCT CONCAT(user_pseudo_id, CAST(ga_session_id AS STRING))) AS clicks,
+      {clicks_sub}         AS clicks,
       SUM(transactions)  AS transactions,
       SUM(revenue_net)   AS revenue,
       {cost_sub}         AS cost
@@ -155,11 +173,12 @@ def get_kpi_summary(
     df = _run_query(sql)
 
     yoy_cost_sub = _cost_sql(yoy_start, yoy_end, site_filter)
+    yoy_clicks_sub = _ads_clicks_sql(yoy_start, yoy_end, customer_ids)
     yoy_sql = f"""
     SELECT
       SUM(revenue_net) AS revenue,
       {yoy_cost_sub}   AS cost,
-      COUNT(DISTINCT CONCAT(user_pseudo_id, CAST(ga_session_id AS STRING))) AS clicks,
+      {yoy_clicks_sub} AS clicks,
       SUM(transactions) AS transactions
     FROM {STAGING_TABLE}
     WHERE date BETWEEN '{yoy_start}' AND '{yoy_end}'
@@ -208,9 +227,23 @@ def get_segmented_performance(
 ) -> pd.DataFrame:
     yoy_start, yoy_end = DateEngine.get_yoy_dates(start_date, end_date)
     site_filter = _site_filter(company, site)
+    customer_ids = _get_customer_ids(company, site)
+    ids_list = ", ".join(customer_ids) if customer_ids else "0"
 
     sql = f"""
     WITH
+    ads_clicks_seg AS (
+      SELECT
+        CASE WHEN LOWER(COALESCE(c.campaign_name, '')) LIKE '%brand%' THEN 'Brand' ELSE 'Non-Brand' END AS segment,
+        SUM(s.metrics_clicks) AS clicks
+      FROM {GADS_STATS} s
+      JOIN (SELECT campaign_id, customer_id, campaign_name FROM {GADS_CAMPAIGNS}
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY campaign_id, customer_id ORDER BY _DATA_DATE DESC) = 1) c
+        ON s.campaign_id = c.campaign_id AND s.customer_id = c.customer_id
+      WHERE s.segments_date BETWEEN '{start_date}' AND '{end_date}'
+        AND s.customer_id IN ({ids_list})
+      GROUP BY 1
+    ),
     dedup_cost AS (
       SELECT campaign_segment, SUM(daily_cost) AS cost
       FROM (SELECT DISTINCT date, campaign_name, site, campaign_segment, cost AS daily_cost
@@ -221,7 +254,6 @@ def get_segmented_performance(
     cur AS (
       SELECT
         campaign_segment AS segment,
-        COUNT(DISTINCT CONCAT(user_pseudo_id, CAST(ga_session_id AS STRING))) AS clicks,
         SUM(transactions) AS transactions,
         SUM(revenue_net)  AS revenue
       FROM {STAGING_TABLE}
@@ -235,10 +267,11 @@ def get_segmented_performance(
       WHERE date BETWEEN '{yoy_start}' AND '{yoy_end}' {site_filter}
       GROUP BY 1
     )
-    SELECT c.segment, c.clicks, c.transactions, c.revenue,
+    SELECT c.segment, COALESCE(ac.clicks, 0) AS clicks, c.transactions, c.revenue,
            COALESCE(dc.cost, 0) AS cost,
            COALESCE(y.revenue, 0) AS yoy_revenue
     FROM cur c
+    LEFT JOIN ads_clicks_seg ac ON c.segment = ac.segment
     LEFT JOIN dedup_cost dc ON c.segment = dc.campaign_segment
     LEFT JOIN yoy y ON c.segment = y.segment
     ORDER BY c.segment
@@ -283,9 +316,18 @@ def get_weekly_performance(
     yoy_offset = timedelta(days=364)
     yoy_week_start = week_start - yoy_offset
     site_filter = _site_filter(company, site)
+    customer_ids = _get_customer_ids(company, site)
+    ids_list = ", ".join(customer_ids) if customer_ids else "0"
 
     sql = f"""
     WITH
+    ads_clicks_wk AS (
+      SELECT FORMAT_DATE('%G-W%V', s.segments_date) AS wk, SUM(s.metrics_clicks) AS clicks
+      FROM {GADS_STATS} s
+      WHERE s.segments_date BETWEEN '{week_start}' AND '{end_date}'
+        AND s.customer_id IN ({ids_list})
+      GROUP BY 1
+    ),
     dedup_cost_wk AS (
       SELECT FORMAT_DATE('%G-W%V', date) AS wk, SUM(daily_cost) AS cost
       FROM (SELECT DISTINCT date, campaign_name, site, cost AS daily_cost
@@ -296,7 +338,6 @@ def get_weekly_performance(
     cur_weekly AS (
       SELECT
         FORMAT_DATE('%G-W%V', date) AS wk,
-        COUNT(DISTINCT CONCAT(user_pseudo_id, CAST(ga_session_id AS STRING))) AS clicks,
         SUM(revenue_net) AS revenue
       FROM {STAGING_TABLE}
       WHERE date BETWEEN '{week_start}' AND '{end_date}'
@@ -313,10 +354,11 @@ def get_weekly_performance(
       GROUP BY 1
     )
     SELECT
-      c.wk AS week, c.clicks, c.revenue, COALESCE(dc.cost, 0) AS cost,
+      c.wk AS week, COALESCE(ac.clicks, 0) AS clicks, c.revenue, COALESCE(dc.cost, 0) AS cost,
       SAFE_DIVIDE(c.revenue - COALESCE(y.revenue, 0),
                   NULLIF(COALESCE(y.revenue, 0), 0)) * 100 AS rev_yoy_pct
     FROM cur_weekly c
+    LEFT JOIN ads_clicks_wk ac ON c.wk = ac.wk
     LEFT JOIN dedup_cost_wk dc ON c.wk = dc.wk
     LEFT JOIN yoy_weekly y ON c.wk = y.wk
     WHERE c.wk IS NOT NULL
@@ -415,8 +457,25 @@ def get_site_deep_dive_data(
 def get_portfolio_grid(start_date: date, end_date: date) -> pd.DataFrame:
     yoy_start, yoy_end = DateEngine.get_yoy_dates(start_date, end_date)
 
+    # Build per-site ads clicks
+    sources = ga4_connector.get_connected_sources()
+    all_customer_ids = [s["gads_customer_id"] for s in sources if s.get("gads_customer_id")]
+    all_ids = ", ".join(all_customer_ids) if all_customer_ids else "0"
+
     sql = f"""
     WITH
+    ads_campaigns AS (
+      SELECT campaign_id, customer_id, campaign_name
+      FROM {GADS_CAMPAIGNS}
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY campaign_id, customer_id ORDER BY _DATA_DATE DESC) = 1
+    ),
+    ads_clicks_site AS (
+      SELECT customer_id, SUM(metrics_clicks) AS clicks
+      FROM {GADS_STATS}
+      WHERE segments_date BETWEEN '{start_date}' AND '{end_date}'
+        AND customer_id IN ({all_ids})
+      GROUP BY 1
+    ),
     dedup_cost_site AS (
       SELECT site, SUM(daily_cost) AS cost
       FROM (SELECT DISTINCT date, campaign_name, site, cost AS daily_cost
@@ -427,7 +486,6 @@ def get_portfolio_grid(start_date: date, end_date: date) -> pd.DataFrame:
     cur AS (
       SELECT
         business_area, company, site,
-        COUNT(DISTINCT CONCAT(user_pseudo_id, CAST(ga_session_id AS STRING))) AS clicks,
         SUM(revenue_net)  AS revenue
       FROM {STAGING_TABLE}
       WHERE date BETWEEN '{start_date}' AND '{end_date}'
@@ -441,7 +499,7 @@ def get_portfolio_grid(start_date: date, end_date: date) -> pd.DataFrame:
     )
     SELECT
       c.business_area, c.company, c.site,
-      c.clicks, c.revenue, COALESCE(dc.cost, 0) AS cost,
+      c.revenue, COALESCE(dc.cost, 0) AS cost,
       COALESCE(y.revenue, 0) AS yoy_revenue
     FROM cur c
     LEFT JOIN dedup_cost_site dc ON c.site = dc.site
@@ -449,6 +507,16 @@ def get_portfolio_grid(start_date: date, end_date: date) -> pd.DataFrame:
     ORDER BY c.business_area, c.company, c.site
     """
     df = _run_query(sql)
+    if not df.empty:
+        # Map site → gads_customer_id → clicks
+        site_to_cid = {s.get("label"): s.get("gads_customer_id") for s in sources}
+        # Get ads clicks per customer_id
+        clicks_sql = f"""SELECT customer_id, SUM(metrics_clicks) AS clicks FROM {GADS_STATS}
+          WHERE segments_date BETWEEN '{start_date}' AND '{end_date}'
+            AND customer_id IN ({all_ids}) GROUP BY 1"""
+        clicks_df = _run_query(clicks_sql)
+        cid_clicks = dict(zip(clicks_df["customer_id"].astype(str), clicks_df["clicks"])) if not clicks_df.empty else {}
+
     if df.empty:
         return pd.DataFrame(columns=["Business Area", "Company", "Site",
                                       "Clicks", "Revenue (SEK)", "YoY Revenue (SEK)",
@@ -461,12 +529,14 @@ def get_portfolio_grid(start_date: date, end_date: date) -> pd.DataFrame:
         cost = float(r["cost"] or 0)
         cos = (cost / rev * 100) if rev else 0
         rev_yoy = ((rev / yoy_rev - 1) * 100) if yoy_rev else 0
+        site_cid = site_to_cid.get(r["site"], "")
+        site_clicks = int(cid_clicks.get(str(site_cid), 0))
 
         rows.append({
             "Business Area": r["business_area"],
             "Company": r["company"],
             "Site": r["site"],
-            "Clicks": int(r["clicks"] or 0),
+            "Clicks": site_clicks,
             "Revenue (SEK)": round(rev),
             "YoY Revenue (SEK)": round(yoy_rev),
             "Cost (SEK)": round(cost),
