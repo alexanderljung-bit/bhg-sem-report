@@ -190,27 +190,36 @@ def get_kpi_summary(
     if df.empty:
         return _empty_kpi()
 
+    def _safe(val, as_type=float):
+        """Handle pd.NA / None / NaN safely."""
+        try:
+            if pd.isna(val):
+                return as_type(0)
+        except (TypeError, ValueError):
+            pass
+        return as_type(val or 0)
+
     r = df.iloc[0]
-    rev = round(float(r["revenue"] or 0), 2)
-    cost = round(float(r["cost"] or 0), 2)
+    rev = round(_safe(r["revenue"]), 2)
+    cost = round(_safe(r["cost"]), 2)
     cos = round((cost / rev * 100), 2) if rev else 0
 
     yr = yoy_df.iloc[0] if not yoy_df.empty else {}
-    yoy_rev = round(float(yr.get("revenue", 0) or 0), 2)
-    yoy_cost = round(float(yr.get("cost", 0) or 0), 2)
+    yoy_rev = round(_safe(yr.get("revenue", 0)), 2)
+    yoy_cost = round(_safe(yr.get("cost", 0)), 2)
     yoy_cos = round((yoy_cost / yoy_rev * 100), 2) if yoy_rev else 0
 
     return {
-        "clicks": int(r["clicks"] or 0),
+        "clicks": _safe(r["clicks"], int),
         "revenue": rev,
         "cost": cost,
         "cos": cos,
-        "transactions": int(r["transactions"] or 0),
-        "yoy_clicks": int(yr.get("clicks", 0) or 0),
+        "transactions": _safe(r["transactions"], int),
+        "yoy_clicks": _safe(yr.get("clicks", 0), int),
         "yoy_revenue": yoy_rev,
         "yoy_cost": yoy_cost,
         "yoy_cos": yoy_cos,
-        "yoy_transactions": int(yr.get("transactions", 0) or 0),
+        "yoy_transactions": _safe(yr.get("transactions", 0), int),
     }
 
 
